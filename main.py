@@ -101,34 +101,45 @@ def get_companies():
 
 @app.get("/stocks/history", tags=["Stock Data"])
 def get_history(
-    ticker:     str = Query(...,  example="OGDC"),
-    split:      str = Query("all", description="train | test | all"),
+    ticker:     str = Query(..., example="OGDC"),
+    split:      Literal["train", "test", "all"] = Query("all", description="train | test | all"),
     start_date: Optional[str] = Query(None, example="2015-01-01"),
     end_date:   Optional[str] = Query(None, example="2015-12-31"),
     include_indicators: bool  = Query(True)
 ):
     """
     Return OHLCV + technical indicators for a ticker.
+    Only `ticker` is required — all other parameters have defaults.
     Filter by split (train/test/all) and optional date range.
     """
     try:
-        df = store.get_split(ticker, split)           # type: ignore[arg-type]
+        df = store.get_split(ticker, split)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Failed to load data for '{ticker}': {e}")
 
-    if start_date:
-        df = df[df["Time"] >= pd.Timestamp(start_date)]
-    if end_date:
-        df = df[df["Time"] <= pd.Timestamp(end_date)]
+    try:
+        if start_date:
+            df = df[df["Time"] >= pd.Timestamp(start_date)]
+        if end_date:
+            df = df[df["Time"] <= pd.Timestamp(end_date)]
+    except Exception as e:
+        raise HTTPException(400, f"Invalid date filter: {e}")
 
     if not include_indicators:
-        df = df[["Time","Open","High","Low","Close","Volume","Company"]]
+        df = df[["Time", "Open", "High", "Low", "Close", "Volume", "Company"]]
 
-    df["Time"] = df["Time"].astype(str)
+    # Safe serialisation: convert Timestamps to strings, replace NaN with None
+    df = df.copy()
+    df["Time"] = df["Time"].dt.strftime("%Y-%m-%d")
+    records = df.where(pd.notnull(df), None).to_dict(orient="records")
+
     return {
         "ticker": ticker,
-        "rows":   len(df),
-        "data":   df.to_dict(orient="records")
+        "split":  split,
+        "rows":   len(records),
+        "data":   records,
     }
 
 
