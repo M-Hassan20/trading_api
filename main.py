@@ -28,6 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, Literal, List
 import pandas as pd
+import numpy as np
 
 from data_engine import DataStore
 
@@ -130,10 +131,22 @@ def get_history(
     if not include_indicators:
         df = df[["Time", "Open", "High", "Low", "Close", "Volume", "Company"]]
 
-    # Safe serialisation: convert Timestamps to strings, replace NaN with None
+    # Safe serialisation
+    # 1. Format timestamps
     df = df.copy()
     df["Time"] = df["Time"].dt.strftime("%Y-%m-%d")
-    records = df.where(pd.notnull(df), None).to_dict(orient="records")
+
+    # 2. Convert to records then sanitise every float value.
+    #    pandas .where(notnull) doesn't work reliably on float64 columns —
+    #    None gets silently upcast back to NaN. Walk the records manually.
+    raw_records = df.to_dict(orient="records")
+
+    def _clean(val):
+        if isinstance(val, float) and (np.isnan(val) or np.isinf(val)):
+            return None
+        return val
+
+    records = [{k: _clean(v) for k, v in row.items()} for row in raw_records]
 
     return {
         "ticker": ticker,
